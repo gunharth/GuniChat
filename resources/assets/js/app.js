@@ -1,22 +1,111 @@
-
-/**
- * First we will load all of this project's JavaScript dependencies which
- * includes Vue and other libraries. It is a great starting point when
- * building robust, powerful web applications using Vue and Laravel.
- */
-
 require('./bootstrap');
 
 window.Vue = require('vue');
 
-/**
- * Next, we will create a fresh Vue application instance and attach it to
- * the page. Then, you may begin adding components to this application
- * or customize the JavaScript scaffolding to fit your unique needs.
- */
-
-Vue.component('example-component', require('./components/ExampleComponent.vue'));
+Vue.component('chat-message', require('./components/ChatMessage.vue'));
+Vue.component('users-typing-status', require('./components/UsersTypingStatus.vue'));
 
 const app = new Vue({
-    el: '#app'
+    el: '#app',
+    data: {
+        chatMessages: [],
+        usersTyping: [],
+        myMessage: '',
+        numberOfUsers: 0,
+        userName: ''
+    },
+    watch: {
+        chatMessages() {
+            // Ensure new message is shown
+            // Timeout is required for scrollHeight final value to be calculated by the browser
+            setTimeout(() => {
+                let el = document.querySelector('#chat-messages')
+                el.scrollTop = el.scrollHeight
+            }, 100)
+        },
+        myMessage() {
+            Echo.private('channel-chat')
+                .whisper('typing', {
+                    userName: this.userName,
+                    message: this.myMessage
+                });
+        }
+    },
+    methods: {
+        send() {
+            if (this.myMessage.length) {
+                axios.post('/send', {
+                    message: this.myMessage
+                })
+                    .then((response) => {
+                        // Successful, no further action required
+                        // Echo will handle update as pusher will broadcast to sender as well
+                    })
+                    .catch(error => {
+                        console.error(error)
+                    });
+                this.myMessage = ''
+            }
+        },
+        /**
+         * Add user name to the list of users who are typing
+         *
+         * @param string userName
+         * @return void
+         */
+        addUserTyping(userName) {
+            // Add user name to the list of users who are typing
+            if (!this.usersTyping.includes(userName)) {
+                this.usersTyping.push(userName);
+            }
+        },
+        /**
+         * Remove user name from the list of users who are typing
+         *
+         * @param string userName
+         * @return void
+         */
+        removeUserTyping(userName) {
+            if (this.usersTyping.includes(userName)) {
+                this.usersTyping = this.usersTyping.filter(userTyping => {
+                    return userTyping !== userName;
+                });
+            }
+        }
+    },
+    mounted() {
+        // Get user name if available
+        this.userName = document.head.querySelector('meta[name="user-name"]').content;
+
+        if (this.userName.length) {
+            // Do not initialize Echo listen if user is not logged in
+            // app/Events/ChatEvent.php, channel defined in method broadcastOn()
+            Echo.private('channel-chat')
+                .listen('.App\\Events\\ChatEvent', (e) => {
+                    this.chatMessages.push({
+                        'userName': e.userName,
+                        'message': e.message,
+                        'time': (new Date()).toLocaleTimeString()
+                    })
+                })
+                .listenForWhisper('typing', (e) => {
+                    if (e.message.length > 0) {
+                        this.addUserTyping(e.userName);
+                    } else {
+                        this.removeUserTyping(e.userName);
+                    }
+                });
+
+            Echo.join(`channel-chat`)
+                .here((users) => {
+                    this.numberOfUsers = users.length;
+                })
+                .joining((user) => {
+                    this.numberOfUsers++;
+                })
+                .leaving((user) => {
+                    this.numberOfUsers--;
+                });
+        }
+    }
 });
